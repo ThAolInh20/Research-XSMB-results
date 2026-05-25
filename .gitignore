@@ -1,0 +1,25 @@
+# Thư mục môi trường ảo (Virtual Environment)
+venv/
+.venv/
+env/
+ENV/
+
+# Bộ nhớ đệm Python (Caches)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# IDE và trình soạn thảo văn bản
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Dữ liệu tạm thời hoặc báo cáo sinh tự động
+.streamlit/
+*.log

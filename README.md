@@ -1,7 +1,7 @@
 # Nghiên cứu và Phân tích Định lượng Kết quả Xổ số Miền Bắc (XSMB)
 
 ## Mục tiêu
-- Thực hiện phân tích định lượng và nghiên cứu học máy trên chuỗi kết quả xổ số miền Bắc (XSMB), đặc biệt tập trung vào chuỗi số giải nhất.
+- Thực hiện phân tích định lượng và nghiên cứu học máy trên chuỗi kết quả xổ số miền Bắc (XSMB), đặc biệt tập trung vào chuỗi số giải đặc biệt.
 - Kiểm thử và so sánh hiệu suất của các mô hình học sâu, mô hình xác suất và các thuật toán học máy để kiểm chứng tính ngẫu nhiên của dữ liệu.
 - Đưa ra các bằng chứng định lượng khoa học để chứng minh rằng kết quả xổ số là hoàn toàn ngẫu nhiên, không có quy luật tuần hoàn có thể khai thác lâu dài về mặt kinh tế.
 

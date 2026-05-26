@@ -22,6 +22,9 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# Import các hàm dự đoán từ module đồng thuận (ensemble)
+from ensemble import predict_gbdt_for_date, predict_lstm_for_date, predict_ensemble_for_date
+
 # Thiết lập giao diện Streamlit sang trọng
 st.set_page_config(
     page_title="AI Lottery Prediction System",
@@ -97,151 +100,6 @@ st.markdown("""
 # =====================================================================
 # CÁC HÀM DỰ ĐOÁN CACHED & OPTIMIZED
 # =====================================================================
-
-def predict_gbdt_for_date(df_clean, target_date):
-    """
-    Dự báo bằng mô hình Cây Quyết định trên dữ liệu lịch sử trước target_date
-    """
-    # Lọc dữ liệu lịch sử trước ngày mục tiêu
-    df_hist = df_clean[df_clean['date_parsed'] < target_date].copy()
-    
-    # Trích xuất đặc trưng bảng cho dữ liệu lịch sử
-    df_hist['day_of_week'] = df_hist['date_parsed'].dt.dayofweek
-    for i in range(1, 8):
-        df_hist[f'lag_{i}'] = df_hist['g1-extract'].shift(i)
-        df_hist[f'lag_{i}_tens'] = df_hist[f'lag_{i}'] // 10
-        df_hist[f'lag_{i}_units'] = df_hist[f'lag_{i}'] % 10
-        df_hist[f'lag_{i}_sum'] = (df_hist[f'lag_{i}_tens'] + df_hist[f'lag_{i}_units']) % 10
-        
-    df_train = df_hist.dropna().copy()
-    
-    feature_cols = ['day_of_week']
-    for i in range(1, 8):
-        feature_cols.extend([f'lag_{i}', f'lag_{i}_tens', f'lag_{i}_units', f'lag_{i}_sum'])
-        
-    X_train = df_train[feature_cols].values
-    y_train = df_train['g1-extract'].values
-    
-    # Khởi tạo mô hình
-    try:
-        import lightgbm as lgb
-        model = lgb.LGBMClassifier(
-            n_estimators=45, 
-            learning_rate=0.05, 
-            max_depth=4, 
-            num_leaves=15, 
-            random_state=42, 
-            verbosity=-1,
-            n_jobs=-1
-        )
-    except ImportError:
-        from sklearn.ensemble import RandomForestClassifier
-        model = RandomForestClassifier(
-            n_estimators=50, 
-            max_depth=5, 
-            random_state=42, 
-            n_jobs=-1
-        )
-        
-    model.fit(X_train, y_train)
-    
-    # Chuẩn bị input của target_date dựa trên ngày cuối cùng của lịch sử
-    last_row = df_hist.iloc[-1]
-    input_dict = {'day_of_week': target_date.dayofweek}
-    input_dict['lag_1'] = last_row['g1-extract']
-    input_dict['lag_1_tens'] = input_dict['lag_1'] // 10
-    input_dict['lag_1_units'] = input_dict['lag_1'] % 10
-    input_dict['lag_1_sum'] = (input_dict['lag_1_tens'] + input_dict['lag_1_units']) % 10
-    
-    for i in range(2, 8):
-        input_dict[f'lag_{i}'] = last_row[f'lag_{i-1}']
-        input_dict[f'lag_{i}_tens'] = last_row[f'lag_{i-1}_tens']
-        input_dict[f'lag_{i}_units'] = last_row[f'lag_{i-1}_units']
-        input_dict[f'lag_{i}_sum'] = last_row[f'lag_{i-1}_sum']
-        
-    df_input = pd.DataFrame([input_dict])
-    X_input = df_input[feature_cols].values
-    
-    # Dự báo
-    proba_raw = model.predict_proba(X_input)[0]
-    classes_seen = model.classes_
-    
-    probs_full = np.zeros(100)
-    for idx, c in enumerate(classes_seen):
-        probs_full[c] = proba_raw[idx]
-        
-    return probs_full
-
-
-def predict_lstm_for_date(df_clean, target_date):
-    """
-    Huấn luyện nhanh và dự báo bằng mô hình LSTM đa nhiệm trên dữ liệu trước target_date
-    """
-    df_hist = df_clean[df_clean['date_parsed'] < target_date].copy()
-    raw_seq = df_hist['g1-extract'].values
-    
-    # Tiền xử lý đa đặc trưng
-    tens_seq = raw_seq // 10
-    units_seq = raw_seq % 10
-    sum_seq = (tens_seq + units_seq) % 10
-    eo_seq = (tens_seq % 2) * 2 + (units_seq % 2)
-    bs_seq = (np.where(tens_seq >= 5, 1, 0)) * 2 + (np.where(units_seq >= 5, 1, 0))
-    
-    data_list = [raw_seq, tens_seq, units_seq, sum_seq, eo_seq, bs_seq]
-    
-    # Nhập các thành phần Dataset và Model từ lstm.py để đảm bảo tính đồng bộ
-    try:
-        from lstm import LotteryFeatureDataset, LotteryMultiTaskLSTM
-    except ImportError:
-        st.error("Không tìm thấy tệp 'lstm.py' trong thư mục gốc. Vui lòng đảm bảo tệp này tồn tại.")
-        st.stop()
-        
-    seq_len = 7
-    dataset = LotteryFeatureDataset(data_list, seq_len)
-    loader = DataLoader(dataset, batch_size=32, shuffle=True)
-    
-    model = LotteryMultiTaskLSTM(hidden_dim=32, num_layers=1)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=1e-3)
-    
-    # Huấn luyện nhanh 20 epochs (chỉ mất ~0.6s trên CPU do tập nhỏ)
-    model.train()
-    for epoch in range(20):
-        for x_b, y_tens_b, y_units_b, _ in loader:
-            optimizer.zero_grad()
-            logits_t, logits_u = model(x_b)
-            loss = criterion(logits_t, y_tens_b) + criterion(logits_u, y_units_b)
-            loss.backward()
-            optimizer.step()
-            
-    # Dự báo cho ngày mục tiêu
-    model.eval()
-    x_raw = raw_seq[-seq_len:]
-    x_tens = tens_seq[-seq_len:]
-    x_units = units_seq[-seq_len:]
-    x_sum = sum_seq[-seq_len:]
-    x_eo = eo_seq[-seq_len:]
-    x_bs = bs_seq[-seq_len:]
-    
-    t_raw = torch.tensor(x_raw, dtype=torch.long)
-    t_tens = torch.tensor(x_tens, dtype=torch.long)
-    t_units = torch.tensor(x_units, dtype=torch.long)
-    t_sum = torch.tensor(x_sum, dtype=torch.long)
-    t_eo = torch.tensor(x_eo, dtype=torch.long)
-    t_bs = torch.tensor(x_bs, dtype=torch.long)
-    
-    x = torch.stack([t_raw, t_tens, t_units, t_sum, t_eo, t_bs], dim=1)
-    input_tensor = x.unsqueeze(0) # [1, seq_len, 6]
-    
-    with torch.no_grad():
-        logits_tens, logits_units = model(input_tensor)
-        prob_tens = torch.softmax(logits_tens, dim=1).numpy()[0]
-        prob_units = torch.softmax(logits_units, dim=1).numpy()[0]
-        
-    probs_full = np.outer(prob_tens, prob_units).flatten()
-    return probs_full
-
-
 def predict_autoregressive(df_clean, target_date, model_choice):
     """
     Dự báo tự hồi quy cuốn chiếu (Autoregressive Forecasting) cho các ngày trong tương lai.
@@ -262,10 +120,7 @@ def predict_autoregressive(df_clean, target_date, model_choice):
         elif "Markov" in model_choice:
             return predict_markov_for_date(df_clean, target_date, alpha=0.15)
         elif "Ensemble" in model_choice:
-            p_lstm = predict_lstm_for_date(df_clean, target_date)
-            p_gbdt = predict_gbdt_for_date(df_clean, target_date)
-            p_markov = predict_markov_for_date(df_clean, target_date, alpha=0.15)
-            return (p_lstm + p_gbdt + p_markov) / 3.0
+            return predict_ensemble_for_date(df_clean, target_date, alpha=0.15)
         else:
             return predict_gbdt_for_date(df_clean, target_date)
             
@@ -280,10 +135,7 @@ def predict_autoregressive(df_clean, target_date, model_choice):
         elif "Markov" in model_choice:
             probs = predict_markov_for_date(df_temp, current_date, alpha=0.15)
         elif "Ensemble" in model_choice:
-            p_lstm = predict_lstm_for_date(df_temp, current_date)
-            p_gbdt = predict_gbdt_for_date(df_temp, current_date)
-            p_markov = predict_markov_for_date(df_temp, current_date, alpha=0.15)
-            probs = (p_lstm + p_gbdt + p_markov) / 3.0
+            probs = predict_ensemble_for_date(df_temp, current_date, alpha=0.15)
         else:
             probs = predict_gbdt_for_date(df_temp, current_date)
             
